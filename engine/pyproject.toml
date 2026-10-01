@@ -1,0 +1,28 @@
+[project]
+name = "letras-engine"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "audio-separator>=0.47.0",
+    "audioread>=3.1.0",
+    "onnxruntime>=1.30.0",
+    "openai-whisper>=20250625",
+    "torch>=2.14.1",
+    "torchaudio>=2.11.0",
+    "yt-dlp>=2026.8.19",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-rocm" }
+torchaudio = { index = "pytorch-rocm" }
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+
+[tool.uv]
+# basic-pitch pide tensorflow<2.15 (no existe para Python 3.13) y resampy<0.4.3 (choca con
+# audio-separator). Usamos su modelo ONNX con onnxruntime, así que ninguno hace falta.
+# whisper pide `triton` (CUDA); torch ROCm ya trae triton-rocm.
+override-dependencies = ["triton; sys_platform == 'never'", "tensorflow; sys_platform == 'never'", "tensorflow-macos; sys_platform == 'never'", "resampy>=0.4"]
+environments = ["sys_platform == 'linux'"]

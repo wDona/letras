@@ -136,4 +136,46 @@ engine.keep("a-b")
 engine.save({"key": "a-b", "lines": [], "v": 2})
 engine.restore("a", "b")
 assert engine.json.loads(engine.doc_path("a-b").read_text())["v"] == 1 and not engine.history("a-b")
+
+# biblioteca: estado de cada letra y su audio; delete audio deja la letra, delete a secas todo
+import io
+from contextlib import redirect_stdout
+
+engine.AUDIO = Path(tempfile.mkdtemp())
+engine.FAILED = engine.AUDIO / "failed"
+engine.FAILED.write_text("a-b\nx-y\n")
+(engine.AUDIO / "a-b.wav").write_bytes(b"1234")
+(engine.AUDIO / "a-bc.wav").write_bytes(b"1")  # otra canción que empieza igual: no es de a-b
+engine.save({"key": "a-b", "source": "lrclib", "synced_by": "ia", "lines": [{"t": 1, "text": "x", "words": [{"t": 1, "w": "x", "p": 0.2}]}, {"t": 2, "text": ""}]})
+
+
+def run(*args):
+    with redirect_stdout(io.StringIO()) as out:
+        args[0](*args[1:])
+    return engine.json.loads(out.getvalue().splitlines()[-1])
+
+
+lib = run(engine.library)
+s = lib["songs"][0]
+assert (s["key"], s["lines"], s["timed"], s["doubts"], s["bytes"], s["failed"]) == ("a-b", 1, True, 1, 4, True), s
+assert s["audio"] == {"wav": True, "vocals": False, "whisper": False} and lib["failed"] == ["x-y"], lib
+run(engine.delete, "a-b", "audio")
+assert engine.doc_path("a-b").exists() and not (engine.AUDIO / "a-b.wav").exists() and (engine.AUDIO / "a-bc.wav").exists()
+run(engine.delete, "a-b")
+assert not engine.doc_path("a-b").exists()
+try:
+    engine.delete("../x")
+    raise AssertionError("delete aceptó una ruta")
+except ValueError:
+    pass
+# texto de Genius con los tiempos de LRCLIB: la línea mal oída se corrige y conserva su tiempo
+lrc_lines = [{"t": 10.0, "text": "when you shine you are such a face like the sea"}, {"t": 14.0, "text": "blue moon"}, {"t": 16.0, "text": "come around"}]
+engine.genius = lambda *a: "When you shine you are such a rare sight to see\n\nBlue moon, come around"
+g = engine.genius_text(lrc_lines, "t", "a", "", 0)
+assert [l["text"] for l in g] == ["When you shine you are such a rare sight to see", "", "Blue moon, come around"], g
+assert g[0]["t"] == 10.0 and g[2]["t"] == 14.0, g
+engine.genius = lambda *a: "otra cancion que no tiene nada que ver"
+assert engine.genius_text(lrc_lines, "t", "a", "", 0) is None
+engine.genius = lambda *a: "\n".join(l["text"] for l in lrc_lines)  # misma letra: nada que cambiar
+assert engine.genius_text(lrc_lines, "t", "a", "", 0) is None
 print("ok")

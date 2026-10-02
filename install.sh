@@ -105,8 +105,8 @@ cat > "$DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Letras
-GenericName=Letras sincronizadas
-Comment=Letras sincronizadas con efectos, de internet o con IA
+GenericName=Gestor de letras sincronizadas
+Comment=Letras de Spotify sincronizadas, de internet o con IA
 Exec=$exec_line
 Icon=letras
 Terminal=false

@@ -1,13 +1,23 @@
 # Letras
 
-Letra de lo que suene, sincronizada y con efectos. App Tauri + Svelte; el motor Python sale de StemLab.
+Gestor de letras sincronizadas de lo que suena en Spotify. App Tauri + Svelte; el motor Python sale de StemLab.
+La app no enseña la letra: la consigue, la sincroniza y la gestiona. La enseña el escritorio (dotfiles:
+`eww/scripts/lyrics.sh`, que usa la de aquí antes que la de internet → lanzador SUPER, brb SUPER+N, otros monitores).
 
-- **Fuente**: lo que suene por MPRIS (Spotify, Firefox, mpv… vía `playerctl`) o un fichero local abierto en la app.
-  En el navegador, «Artista - Canción (Official Video)» se limpia antes de buscar.
+- **Fuente**: solo Spotify (`playerctl -p spotify`); el navegador y demás reproductores no cuentan.
+- **Biblioteca**: todas las letras guardadas con de dónde salió el texto (LRCLIB, Genius, IA…), cómo está sincronizada
+  (venía sincronizada / IA con Whisper / IA rápida sobre los tiempos que traía / a mano / sin tiempos), dudas de Whisper,
+  qué audio hay en caché y cuánto ocupa. Filtros, búsqueda (`/`), orden y acciones en bloque (IA, borrar audio, ocultar).
+- **Por canción**: editar (E), sincronizar con IA o rápida, transcribir, buscar otra vez (la anterior va al historial),
+  volver a la anterior, desfase, ocultar en el escritorio, instrumental, nota, borrar audio o la canción entera.
+- **Playlists**: editar `playlists.txt`, lanzar el prefetch ya, ver y reintentar las fallidas.
 - **Búsqueda** (`engine.py find`), en orden, hasta que una dé letra:
   1. Sincronizadas: LRCLIB, NetEase, QQ Música, Kugou (las mismas que `lyrics.sh` de quickshell; título igual y duración ±3 s).
-  2. Sin tiempos: LRCLIB (plana), Genius (su búsqueda pública y el HTML de la página), lyrics.ovh.
+  2. Sin tiempos: Genius (su búsqueda pública y el HTML de la página), LRCLIB (plana), lyrics.ovh.
   3. Nada: la transcribe la IA.
+  Si la sincronizada la tiene también Genius y dice otra cosa (las de LRCLIB las sube cualquiera y a veces están mal oídas),
+  se queda el texto de Genius con los tiempos de la sincronizada, palabra a palabra (`genius_text`). `engine.py retext` lo hace
+  con las ya guardadas.
 - **Siempre sincronizada**: si lo encontrado no trae tiempos (o no hay nada), la IA arranca sola al acabar la búsqueda:
   a la letra plana le pone tiempos, y si no hay letra la transcribe. Un trabajo de IA a la vez; si cambias de canción
   mientras trabaja, el resultado se guarda para la suya y se mira si la que suena ahora necesita otro.
@@ -30,11 +40,6 @@ Letra de lo que suene, sincronizada y con efectos. App Tauri + Svelte; el motor 
   (y quita `--uninstall`).
 - **Editor** (E): al transcribir con IA se abre solo y marca en amarillo las líneas con palabras dudosas. Texto y tiempo por línea, pegar el texto entero, desplazar todo, tap-sync (Espacio en cada
   línea mientras suena) y re-sincronizar con IA.
-- **Estilo** (S): presets (Apple Music, Karaoke, Neón, Vapor, Minimal) y todo ajustable: fuente, tamaños,
-  colores, resplandor, barrido karaoke por palabra o línea, desenfoque, zoom, velocidad, fondo aurora / carátula /
-  color / transparente. Se guarda en `settings.json` de la carpeta de datos (pensado para leerlo desde quickshell).
-- Atajos: `[` `]` desfase de la canción ±0.1 s, F pantalla completa, Espacio play/pausa (modo fichero),
-  clic en una línea para saltar ahí.
 
 Datos: `$LETRAS_DATA`, si no `/data/letras` si `/data` es escribible, si no `~/.local/share/letras`.
 Modelos: los de StemLab (`/data/stemlab/models`) si existen, y su mismo candado de GPU: nunca cargan los dos a la vez.

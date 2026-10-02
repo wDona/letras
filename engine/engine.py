@@ -6,9 +6,13 @@
                                                         («lineas»: sin Whisper, desde los tiempos por línea que ya hay)
   restore <artista> <título>                            vuelve a la letra de antes de la última sincronización con IA
   prefetch                                              sincroniza con IA las canciones de las playlists de playlists.txt
+  library                                               todas las letras guardadas con su estado (para gestionarlas)
+  delete <clave> [audio]                                borra la canción (letra, historial y audio) o solo su audio
+  retext [clave]                                        a las ya guardadas con letra de LRCLIB/NetEase/…, el texto de Genius
 
 Documento de letra (lyrics/<clave>.json):
-  {"key", "artist", "title", "source", "synced": bool, "synced_by"?: "ia", "instrumental": bool,
+  {"key", "artist", "title", "duration"?: s, "source", "times_from"?: fuente de los tiempos por línea si no es `source`, "synced": bool, "synced_by"?: "ia", "ai_mode"?: "whisper"|"lineas",
+   "instrumental": bool, "edited"?: bool, "offset"?: s, "hidden"?: bool (no sale en el escritorio), "note"?: str,
    "lines": [{"t": s|None, "end"?: s, "text": str, "words"?: [{"t": s, "end"?: s, "w": str}]}]}
 """
 
@@ -17,6 +21,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -291,8 +296,27 @@ def genius(title, artist, album, duration):
     return page.text() or None
 
 
+def genius_text(lines, title, artist, album, duration):
+    """Las letras sincronizadas (LRCLIB…) las sube cualquiera y a veces están mal oídas («such a face like the sea»
+    por «such a rare sight to see»); Genius suele estar bien, pero sin tiempos. Esto da el texto de Genius con los
+    tiempos de `lines`: cada palabra toma la de la palabra emparejada (`align`). None si Genius no la tiene, dice
+    lo mismo, o no encaja en las dos direcciones (otra canción, o le faltan estribillos)."""
+    text = genius(title, artist, album, duration)
+    if not text:
+        return None
+    texts = [l["text"] for l in plain_lines(text)]
+    mine = [w for t in texts for w in tokens(t)]
+    if keys(mine, "w") == keys([w for l in lines for w in tokens(l["text"])], "w"):
+        return None
+    sp = spread(lines)
+    heard = [w for l, s in zip(lines, sp) for w in (l.get("words") or s.get("words") or [])]
+    if match_ratio(texts, heard) < 0.6 or match_ratio([l["text"] for l in lines], [{"w": w} for w in mine]) < 0.6:
+        return None
+    return align(texts, heard)
+
+
 SYNCED = [lrclib, netease, qq, kugou]  # mismo orden que lyrics.sh de quickshell
-PLAIN = [lrclib_plain, genius, lyrics_ovh]  # sin tiempos, pero mejor que inventarse la letra con IA
+PLAIN = [genius, lrclib_plain, lyrics_ovh]  # sin tiempos, pero mejor que inventarse la letra con IA; Genius suele estar mejor oída
 
 
 def doc_path(key):
@@ -340,8 +364,18 @@ def find(artist, title, album="", duration="0", force=""):
         emit("progress", step=i + 1, total=len(sources), label=f"Buscando en {src.__name__}")
         text = src(*args)
         lines = text and (parse_lrc(text) if src in SYNCED else plain_lines(text))
+        source, extra = src.__name__, {}
+        if lines and src in SYNCED:
+            better = genius_text(lines, *args)
+            if better:
+                lines, source, extra = better, "genius", {"times_from": src.__name__}
         if lines:
-            doc = {"key": key, "artist": artist, "title": title, "source": src.__name__, "synced": src in SYNCED, "instrumental": False, "lines": lines}
+            old = json.loads(doc_path(key).read_text()) if doc_path(key).exists() else {}
+            keep(key)  # «Buscar otra vez» pisa la letra (y lo hecho con IA): que se pueda volver
+            # lo que pones tú a la canción (desfase, nota, oculta) no depende de la letra: se queda
+            doc = {**{k: old[k] for k in ("offset", "note", "hidden") if k in old},
+                   "key": key, "artist": artist, "title": title, "duration": float(duration or 0) or old.get("duration", 0),
+                   "source": source, **extra, "synced": src in SYNCED, "instrumental": False, "lines": lines}
             emit("done", key=key, lyrics=save(doc), cached=False)
             return
     emit("done", key=key, lyrics=None, cached=False)
@@ -847,7 +881,7 @@ def ai(artist, title, audio="", duration="0", mode=""):
             raise RuntimeError(f"el audio dura {len(rms) / FPS:.0f} s y tu canción {float(duration):.0f} s: es otra versión. Usa «Sincronizar con IA»")
         lines = refine(spread(doc["lines"]), em, rms, pad=0.5, far=float("inf"))
         keep(key)
-        doc.update(synced=True, synced_by="ia", lines=lines)
+        doc.update(synced=True, synced_by="ia", ai_mode="lineas", lines=lines)
         emit("done", key=key, lyrics=save(doc), history=len(history(key)))
         return
     if not heard_f.exists():
@@ -873,7 +907,9 @@ def ai(artist, title, audio="", duration="0", mode=""):
         if abs(by) > 1:  # otra versión del audio: a los tiempos de la tuya
             lines = shifted(lines, -by)
     keep(key)
-    doc.update(key=key, artist=artist, title=title, synced=True, synced_by="ia", instrumental=not lines, lines=lines)
+    doc.update(key=key, artist=artist, title=title, synced=True, synced_by="ia", ai_mode="whisper", instrumental=not lines, lines=lines)
+    if float(duration or 0):
+        doc["duration"] = float(duration)
     emit("done", key=key, lyrics=save(doc), history=len(history(key)))
 
 
@@ -913,7 +949,7 @@ def prefetch():
     from concurrent.futures import ThreadPoolExecutor
 
     urls = [l.split("#")[0].strip() for l in PLAYLISTS.read_text().splitlines()] if PLAYLISTS.exists() else []
-    failed_f = DATA / ".prefetch-failed"
+    failed_f = FAILED
     failed = set(failed_f.read_text().split()) if failed_f.exists() else set()
     todo, seen = [], set()
     for url in filter(None, urls):
@@ -978,9 +1014,79 @@ def prefetch():
                 print(f"prefetch: {key} falló (código {p.returncode}, el error está arriba)", file=sys.stderr)
 
 
+FAILED = DATA / ".prefetch-failed"
+
+
+def retext(only=""):
+    """`genius_text` sobre las ya guardadas con texto de otra fuente (con tiempos) y sin editar a mano. Los tiempos
+    salen de los que ya tienen (los de la IA si pasó por ella); la versión de antes va al historial. Quedan sin
+    `synced_by`: «IA rápida» (o el prefetch) las afina otra vez palabra a palabra."""
+    changed = []
+    for f in sorted(LYRICS.glob("*.json")):
+        doc = json.loads(f.read_text())
+        others = {s.__name__ for s in SYNCED + PLAIN} - {"genius"}
+        if (only and f.stem != only) or doc.get("source") not in others or doc.get("edited") or not any(l.get("t") is not None for l in doc["lines"]):
+            continue
+        lines = genius_text(doc["lines"], doc["title"], doc["artist"], "", doc.get("duration") or 0)
+        if not lines:
+            continue
+        keep(f.stem)
+        for k in ("synced_by", "ai_mode"):
+            doc.pop(k, None)
+        if doc["source"] in {s.__name__ for s in SYNCED}:  # de texto plano, los tiempos eran de la IA: no hay otra fuente que nombrar
+            doc["times_from"] = doc["source"]
+        doc.update(source="genius", lines=lines)
+        save(doc)
+        changed.append(f.stem)
+        print(f"retext: {f.stem}", file=sys.stderr)
+    emit("done", changed=changed)
+
+
+def library():
+    """Cada letra guardada con lo que hace falta para gestionarla: de dónde salió, cómo se sincronizó,
+    qué audio hay en caché (y cuánto ocupa) y si el prefetch la dio por fallida."""
+    failed = set(FAILED.read_text().split()) if FAILED.exists() else set()
+    songs = []
+    for f in sorted(LYRICS.glob("*.json")):
+        try:
+            d = json.loads(f.read_text())
+        except ValueError:
+            continue
+        key, lines = f.stem, d.get("lines", [])
+        files = list(AUDIO.glob(f"{key}.*"))  # la clave no lleva puntos: no casa con otra que empiece igual
+        songs.append({
+            **{k: d.get(k) for k in ("artist", "title", "source", "times_from", "synced_by", "ai_mode", "edited", "instrumental", "offset", "hidden", "note", "duration")},
+            "key": key,
+            "lines": sum(bool(l.get("text")) for l in lines),
+            "timed": any(l.get("t") is not None for l in lines),
+            "words": any(l.get("words") for l in lines),
+            "doubts": sum(any(w.get("p") is not None and w["p"] < 0.5 for w in l.get("words", [])) for l in lines),
+            "history": len(history(key)),
+            "modified": f.stat().st_mtime,
+            "audio": {"wav": (AUDIO / f"{key}.wav").exists(), "vocals": (AUDIO / f"{key}.vocals.wav").exists(),
+                      "whisper": any(p.name.endswith(".words.json") for p in files)},
+            "bytes": sum(p.stat().st_size for p in files),
+            "failed": key in failed,
+        })
+    known = {s["key"] for s in songs}
+    emit("done", songs=songs, failed=sorted(failed - known))
+
+
+def delete(key, what=""):
+    """what="audio": solo la caché de audio (la IA tendrá que volver a descargar y separar). Si no, todo."""
+    if key != slugify(key):
+        raise ValueError(f"clave no válida: {key}")
+    for p in AUDIO.glob(f"{key}.*"):
+        p.unlink()
+    if what != "audio":
+        doc_path(key).unlink(missing_ok=True)
+        shutil.rmtree(LYRICS / ".history" / key, ignore_errors=True)
+    emit("done", key=key)
+
+
 def main():
     cmd, *args = sys.argv[1:] or ["help"]
-    commands = {"find": find, "open": open_file, "ai": ai, "restore": restore, "prefetch": prefetch}
+    commands = {"find": find, "open": open_file, "ai": ai, "restore": restore, "prefetch": prefetch, "library": library, "delete": delete, "retext": retext}
     try:
         if cmd not in commands:
             raise ValueError(f"subcomando desconocido: {cmd}")

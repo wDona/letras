@@ -6,13 +6,30 @@ export type Lyrics = {
   key: string;
   artist: string;
   title: string;
-  source: string; // lrclib, netease, qq, kugou, lrclib_plain, lyrics_ovh, ia, manual
+  source: string; // de dónde sale el texto: lrclib, netease, qq, kugou, lrclib_plain, genius, lyrics_ovh, ia, manual
+  times_from?: string; // de dónde salen los tiempos por línea, si no es `source` (texto de Genius + tiempos de LRCLIB)
   synced: boolean;
   synced_by?: "ia";
+  ai_mode?: "whisper" | "lineas";
   instrumental: boolean;
   edited?: boolean;
   offset?: number; // s, desfase de esta canción (otra versión, intro distinta)
+  hidden?: boolean; // no sale en el escritorio (lyrics.sh)
+  note?: string;
+  duration?: number;
   lines: Line[];
+};
+/** Resumen de una letra guardada (`engine.py library`). */
+export type Song = Pick<Lyrics, "key" | "artist" | "title" | "source" | "times_from" | "synced_by" | "ai_mode" | "edited" | "instrumental" | "offset" | "hidden" | "note" | "duration"> & {
+  lines: number; // con texto
+  timed: boolean;
+  words: boolean;
+  doubts: number; // líneas con palabras dudosas de Whisper
+  history: number;
+  modified: number; // s epoch
+  audio: { wav: boolean; vocals: boolean; whisper: boolean };
+  bytes: number;
+  failed: boolean; // el prefetch la dio por fallida
 };
 export type Track = { artist: string; title: string; album: string; duration: number; url?: string; art?: string };
 
@@ -46,16 +63,20 @@ export async function readJson<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-export const writeJson = (path: string, data: unknown) =>
-  invoke("write_file", new TextEncoder().encode(JSON.stringify(data, null, 1)), {
-    headers: { path: encodeURIComponent(path) },
-  }).catch((e) => log(`guardar ${path}: ${e}`));
+export const writeText = (path: string, text: string) =>
+  invoke("write_file", new TextEncoder().encode(text), { headers: { path: encodeURIComponent(path) } })
+    .catch((e) => log(`guardar ${path}: ${e}`));
+export const writeJson = (path: string, data: unknown) => writeText(path, JSON.stringify(data, null, 1));
+
+/** Texto de la carpeta de datos; "" si no existe. */
+export const readText = (path: string) =>
+  invoke<ArrayBuffer>("read_file", { path }).then((b) => new TextDecoder().decode(b), () => "");
 
 export const paths = { data: "" };
 export async function initPaths() {
   paths.data = await invoke<string>("data_dir_cmd");
 }
-export const settingsPath = () => `${paths.data}/settings.json`;
+export const dataPath = (name: string) => `${paths.data}/${name}`;
 export const lyricsPath = (key: string) => `${paths.data}/lyrics/${key}.json`;
 
 export const SOURCE_LABEL: Record<string, string> = {
@@ -69,6 +90,8 @@ export const SOURCE_LABEL: Record<string, string> = {
   ia: "IA",
   manual: "a mano",
 };
+/** Fuentes que ya traen tiempos por línea. */
+export const SYNCED_SOURCES = new Set(["lrclib", "netease", "qq", "kugou"]);
 
 /** Palabras que Whisper no tiene claras: lo primero que revisar en una letra transcrita. */
 export const doubtful = (l: Line) => (l.words ?? []).filter((w) => w.p != null && w.p < 0.5).map((w) => w.w);

@@ -192,12 +192,12 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Reproductor MPRIS activo (vía playerctl): el que esté sonando, si no el primero.
-/// Posición y duración en segundos; null si no hay ninguno.
+/// Spotify (vía playerctl). Solo Spotify: el navegador, mpv, etc. no cuentan.
+/// Posición y duración en segundos; null si no está abierto.
 #[tauri::command]
 fn player(prefer: Option<String>) -> Value {
     const FMT: &str = "{{playerName}}\t{{status}}\t{{position}}\t{{mpris:length}}\t{{artist}}\t{{title}}\t{{album}}\t{{xesam:url}}\t{{mpris:artUrl}}";
-    let Ok(out) = Command::new("playerctl").args(["-a", "metadata", "--format", FMT]).output() else {
+    let Ok(out) = Command::new("playerctl").args(["-p", "spotify", "metadata", "--format", FMT]).output() else {
         return Value::Null;
     };
     parse_players(&String::from_utf8_lossy(&out.stdout), prefer.as_deref())
@@ -224,6 +224,20 @@ fn player_seek(name: String, secs: f64) {
     let _ = Command::new("playerctl").args(["-p", &name, "position", &format!("{secs:.3}")]).status();
 }
 
+/// Lanza ya el prefetch de las playlists (el servicio de systemd que pone install.sh), sin esperar al timer.
+#[tauri::command]
+fn prefetch_now() -> Result<(), String> {
+    let out = Command::new("systemctl")
+        .args(["--user", "start", "--no-block", "letras-prefetch.service"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 /// Errores del frontend a la terminal.
 #[tauri::command]
 fn log(msg: String) {
@@ -235,7 +249,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![engine, cancel, cancel_all, read_file, write_file, data_dir_cmd, log, player, player_seek])
+        .invoke_handler(tauri::generate_handler![engine, cancel, cancel_all, read_file, write_file, data_dir_cmd, log, player, player_seek, prefetch_now])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

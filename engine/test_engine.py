@@ -28,6 +28,19 @@ assert out[1] == {"t": out[0]["end"], "text": ""}
 assert [w["t"] for w in out[2]["words"]] == [4, 6, 7] and out[2]["text"] == "Cuatro, cinco son"
 assert all(a["t"] <= b["t"] for a, b in zip(out, out[1:]))
 assert [l["t"] for l in engine.align(["a b", "c"], [])] == [0.0, 0.6]  # sin nada oído: no peta
+
+# alineado forzado: "hola" suena en 1.0 s y "yo" en 2.0 s; Whisper decía 0.8 y 1.8. La voz sigue hasta 2.6 s
+import numpy as np
+
+em = np.full((200, 29), -10.0, dtype=np.float32)
+em[:, 0] = 0
+for f, c in [(50, 15), (51, 5), (52, 12), (53, 1), (100, 16), (101, 5)]:  # h o l a / y o (índices de MMS_FA)
+    em[f, 0], em[f, c] = -10, 0
+rms = np.where((np.arange(200) >= 50) & (np.arange(200) < 130), 0.3, 0.001)
+rms[110:118] = 0.001  # respiro corto: no corta la nota
+out = engine.refine([{"t": 0.8, "end": 2.0, "text": "Hola, yo", "words": [{"t": 0.8, "end": 1.2, "w": "Hola,"}, {"t": 1.8, "end": 2.0, "w": "yo"}]}, {"t": 3.0, "text": ""}], em, rms)
+assert [w["t"] for w in out[0]["words"]] == [1.0, 2.0] and out[0]["t"] == 1.0, out
+assert out[0]["end"] == out[0]["words"][-1]["end"] == 2.6 and out[1]["t"] == 2.6, out
 print("ok")
 
 # voz en 2-4 s y 10-11 s sobre un fondo 40 dB más bajo (lo que deja la separación): solo esos tramos
@@ -103,4 +116,24 @@ assert engine.to_lines([{"words": [{"t": 0, "end": 0.3, "w": "猫が"}, {"t": 0.
 # signos sueltos no casan entre sí
 assert engine.pair(engine.keys(["-"], "w"), engine.keys(["、"], "h")) == [0]  # se empareja por posición (sustitución), pero no cuenta como igual
 assert engine.match_ratio(["-"], [{"t": 0, "w": "、"}]) == 0
+# verso largo (>63 letras = >127 estados): no se desborda
+em = np.full((400, 29), -10.0, dtype=np.float32)
+em[:, 0] = 0
+for i, c in enumerate([1, 2] * 40):
+    em[10 + 4 * i, 0], em[10 + 4 * i, c] = -10, 0
+assert [a for a, _ in engine.ctc_spans(em, [1, 2] * 40)] == [10 + 4 * i for i in range(80)]
+# sincronizar rápido: palabras repartidas por letras hasta la línea siguiente
+sp = engine.spread([{"t": 1.0, "text": "ab cd"}, {"t": 2.0, "text": ""}, {"t": None, "text": "x"}])
+assert [(w["t"], w["end"]) for w in sp[0]["words"]] == [(1.0, 1.5), (1.5, 2.0)] and sp[0]["end"] == 2.0 and "words" not in sp[1], sp
+
+# historial: keep guarda la actual, restore la recupera
+import tempfile
+from pathlib import Path
+
+engine.LYRICS = Path(tempfile.mkdtemp())
+engine.save({"key": "a-b", "lines": [], "v": 1})
+engine.keep("a-b")
+engine.save({"key": "a-b", "lines": [], "v": 2})
+engine.restore("a", "b")
+assert engine.json.loads(engine.doc_path("a-b").read_text())["v"] == 1 and not engine.history("a-b")
 print("ok")

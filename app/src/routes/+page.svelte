@@ -25,8 +25,10 @@
   let key = $state("");
   let doc = $state<Doc | null>(null);
   let searching = $state(false);
-  let job = $state<{ label: string; step?: number; total?: number; pct?: number } | null>(null);
+  // song: título de la canción del trabajo (puede no ser la que suena: la IA va de una en una)
+  let job = $state<{ label: string; step?: number; total?: number; pct?: number; song?: string } | null>(null);
   let error = $state("");
+  let history = $state(0); // versiones anteriores guardadas de esta letra (para «Volver a la anterior»)
   let panel = $state<"" | "edit" | "style">("");
   let now = $state(0);
   let idle = $state(false);
@@ -68,9 +70,9 @@
   }
 
   function progress(e: EngineEvent) {
-    if (e.event === "progress") job = { label: e.label, step: e.step, total: e.total };
+    if (e.event === "progress") job = { song: job?.song, label: e.label, step: e.step, total: e.total };
     else if (e.event === "pct" && job) job.pct = e.value;
-    else if (e.event === "waiting") job = { label: e.label };
+    else if (e.event === "waiting") job = { song: job?.song, label: e.label };
   }
 
   async function load(t: Track, force = false) {
@@ -80,12 +82,13 @@
     error = "";
     searching = true;
     try {
-      const r = await engine<{ key: string; lyrics: Doc | null }>(
+      const r = await engine<{ key: string; lyrics: Doc | null; history?: number }>(
         ["find", t.artist, t.title, t.album, String(Math.round(t.duration)), force ? "force" : ""], () => {}, id,
       );
       if (id !== findId) return;
       key = r.key;
       doc = r.lyrics;
+      history = r.history ?? 0;
     } catch (e) {
       if (id === findId && e !== "cancelado") error = String(e);
     } finally {
@@ -108,18 +111,20 @@
     await writeJson(lyricsPath(key), d);
   }
 
-  async function runAI(d?: Doc) {
+  /** mode "lineas": sin Whisper, desde los tiempos por línea que ya tiene la letra. */
+  async function runAI(d?: Doc, mode = "") {
     if (!track || job) return;
     if (d) await save(d);
     error = "";
-    job = { label: "Preparando IA" };
     const t = track, k = key; // la canción puede cambiar mientras trabaja: el resultado es de esta
+    job = { label: "Preparando IA", song: t.title };
     try {
       const audioSrc = mode === "file" ? filePath : (t.url ?? "");
-      const r = await engine<{ lyrics: Doc }>(["ai", t.artist, t.title, audioSrc, String(Math.round(t.duration))], progress);
+      const r = await engine<{ lyrics: Doc; history: number }>(["ai", t.artist, t.title, audioSrc, String(Math.round(t.duration)), mode], progress);
       aiFailed.delete(k);
       if (k === key) {
         doc = r.lyrics;
+        history = r.history;
         if (doc.source === "ia" && doc.lines.length) panel = "edit"; // transcrita: lo siguiente es corregirla
       } // si no, ya está en disco y saldrá de la caché cuando vuelva a sonar
     } catch (e) {
@@ -129,6 +134,18 @@
       job = null;
     }
     ensureSynced();
+  }
+
+  /** Deshace la última sincronización con IA (la versión anterior la guardó el motor). */
+  async function restore() {
+    if (!track || job) return;
+    try {
+      const r = await engine<{ lyrics: Doc; history: number }>(["restore", track.artist, track.title]);
+      doc = r.lyrics;
+      history = r.history;
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function openFile() {
@@ -318,9 +335,9 @@
 {/if}
 
 {#if job}
-  <div class="banner">
+  <div class="banner" class:shifted={panel !== ""}>
     <div class="spinner small"></div>
-    {job.label}{job.total ? ` (${job.step}/${job.total})` : ""}{job.pct != null ? ` · ${job.pct}%` : ""}
+    {job.song && job.song !== track?.title ? `IA con «${job.song}»: ` : "IA: "}{job.label}{job.total ? ` (${job.step}/${job.total})` : ""}{job.pct != null ? ` · ${job.pct}%` : ""}
   </div>
 {/if}
 
@@ -336,8 +353,8 @@
 </div>
 
 {#if panel === "edit" && doc}
-  {#key doc.key + (doc.synced_by ?? "")}
-    <Editor {doc} {now} busy={!!job} onsave={save} onai={runAI} onseek={seek} onclose={() => (panel = "")} />
+  {#key doc}
+    <Editor {doc} {now} {job} otherSong={job?.song && job.song !== track?.title ? job.song : ""} {history} onsave={save} onai={runAI} onfast={(d) => runAI(d, "lineas")} onrestore={restore} onseek={seek} onclose={() => (panel = "")} />
   {/key}
 {:else if panel === "style"}
   <Settings {s} onclose={() => (panel = "")} />
@@ -501,6 +518,10 @@
     z-index: 6;
     max-width: calc(100vw - 32px);
     box-sizing: border-box;
+  }
+  /* con un panel abierto, a la izquierda de él (si no, el editor lo tapa) */
+  .banner.shifted {
+    left: calc((100vw - min(560px, 100vw)) / 2);
   }
   .banner.err {
     bottom: 120px;

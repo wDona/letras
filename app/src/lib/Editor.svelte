@@ -4,17 +4,25 @@
   let {
     doc,
     now,
-    busy,
+    job,
+    otherSong,
+    history,
     onsave,
     onai,
+    onfast,
+    onrestore,
     onseek,
     onclose,
   }: {
     doc: Lyrics;
     now: number;
-    busy: boolean;
+    job: { label: string; step?: number; total?: number } | null;
+    otherSong: string; // la IA está ocupada con otra canción
+    history: number; // versiones anteriores guardadas
     onsave: (d: Lyrics) => void;
     onai: (d: Lyrics) => void;
+    onfast: (d: Lyrics) => void;
+    onrestore: () => void;
     onseek: (t: number) => void;
     onclose: () => void;
   } = $props();
@@ -27,6 +35,7 @@
   let paste = $state<string | null>(null);
   let rows: HTMLDivElement;
 
+  const busy = $derived(!!job);
   const doubts = $derived(lines.filter((l) => doubtful(l).length).length);
   const touch = () => (dirty = true);
   function setText(l: Line, text: string) {
@@ -111,7 +120,15 @@
     </button>
     <button disabled={busy || !lines.some((l) => l.text)} onclick={() => { const d = result(); dirty = false; onai(d); }}
       title="Mantiene tu texto y le pone tiempos con Whisper. Tras la primera vez es instantáneo.">
-      Sincronizar con IA
+      {busy ? "Sincronizando…" : "Sincronizar con IA"}
+    </button>
+    <button disabled={busy || !lines.some((l) => l.t != null && l.text)} onclick={() => { const d = result(); dirty = false; onfast(d); }}
+      title="Sin Whisper: parte de los tiempos por línea que ya tiene la letra y ajusta cada palabra. Más rápido, pero no comprueba que el audio sea esta canción.">
+      Sincronizar rápido
+    </button>
+    <button disabled={busy || !history} onclick={onrestore}
+      title="Deshace la última sincronización con IA ({history} guardadas).">
+      Volver a la anterior{history > 1 ? ` (${history})` : ""}
     </button>
     <span class="nudge">
       Todo
@@ -119,6 +136,12 @@
       <button onclick={() => shift(0.1)}>+0.1 s</button>
     </span>
   </div>
+
+  {#if job}
+    <p class="hint busy">
+      {otherSong ? `La IA está con «${otherSong}»; cuando acabe sigue con esta.` : `IA: ${job.label}${job.total ? ` (${job.step}/${job.total})` : ""}…`}
+    </p>
+  {/if}
 
   {#if doc.source === "ia" && !doc.edited}
     <p class="hint warn">
@@ -218,6 +241,10 @@
   }
   .row.doubt .text {
     border-color: rgba(255, 194, 61, 0.5);
+  }
+  .hint.busy {
+    color: #ff7fb0;
+    opacity: 1;
   }
   .hint.warn {
     color: #ffc23d;

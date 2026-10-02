@@ -2,7 +2,10 @@
   import type { Line, Word } from "./engine";
   import type { Settings } from "./settings";
 
-  let { lines, now, s, onseek }: { lines: Line[]; now: number; s: Settings; onseek: (t: number) => void } = $props();
+  let { lines, now: playing, s, onseek }: { lines: Line[]; now: number; s: Settings; onseek: (t: number) => void } = $props();
+  // adelanto: la palabra ya se ve iluminada cuando empieza a sonar (el barrido tarda un poco en notarse)
+  const LEAD = 0.1;
+  const now = $derived(playing + LEAD);
 
   let box: HTMLDivElement;
   let list: HTMLDivElement;
@@ -35,7 +38,11 @@
   function wordsOf(line: Line, k: number): Word[] {
     const end = line.t == null ? 0 : endOf(k);
     if (line.words?.length) {
-      return line.words.map((w, i) => ({ ...w, end: w.end ?? line.words![i + 1]?.t ?? end }));
+      // el barrido sigue hasta que empieza la siguiente: sin parones en los huecos cortos entre palabras
+      return line.words.map((w, i) => {
+        const next = line.words![i + 1]?.t ?? end;
+        return { ...w, end: w.end == null || next - w.end < 1 ? next : w.end };
+      });
     }
     const parts = line.text.split(/\s+/).filter(Boolean);
     const total = parts.reduce((n, p) => n + p.length + 1, 0);

@@ -14,13 +14,14 @@ export type Lyrics = {
   instrumental: boolean;
   edited?: boolean;
   offset?: number; // s, desfase de esta canción (otra versión, intro distinta)
+  word_offset?: number; // s, desfase solo de las palabras (el barrido va antes o después que la frase)
   hidden?: boolean; // no sale en el escritorio (lyrics.sh)
   note?: string;
   duration?: number;
   lines: Line[];
 };
 /** Resumen de una letra guardada (`engine.py library`). */
-export type Song = Pick<Lyrics, "key" | "artist" | "title" | "source" | "times_from" | "synced_by" | "ai_mode" | "edited" | "instrumental" | "offset" | "hidden" | "note" | "duration"> & {
+export type Song = Pick<Lyrics, "key" | "artist" | "title" | "source" | "times_from" | "synced_by" | "ai_mode" | "edited" | "instrumental" | "offset" | "word_offset" | "hidden" | "note" | "duration"> & {
   lines: number; // con texto
   timed: boolean;
   words: boolean;

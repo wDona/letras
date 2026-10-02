@@ -7,7 +7,9 @@ La app no enseña la letra: la consigue, la sincroniza y la gestiona. La enseña
 - **Fuente**: solo Spotify (`playerctl -p spotify`); el navegador y demás reproductores no cuentan.
 - **Biblioteca**: todas las letras guardadas con de dónde salió el texto (LRCLIB, Genius, IA…), cómo está sincronizada
   (venía sincronizada / IA con Whisper / IA rápida sobre los tiempos que traía / a mano / sin tiempos), dudas de Whisper,
-  qué audio hay en caché y cuánto ocupa. Filtros, búsqueda (`/`), orden y acciones en bloque (IA, borrar audio, ocultar).
+  qué audio hay en caché y cuánto ocupa. Filtros, búsqueda (`/`), orden y acciones en bloque sobre la selección (casillas, shift-clic para un tramo, Ctrl+A, Esc):
+  IA, IA rápida, buscar otra vez, volver a la anterior, ocultar/mostrar, instrumental, quitar desfase, reintentar en
+  prefetch, borrar audio o las canciones.
 - **Por canción**: editar (E), sincronizar con IA o rápida, transcribir, buscar otra vez (la anterior va al historial),
   volver a la anterior, desfase, ocultar en el escritorio, instrumental, nota, borrar audio o la canción entera.
 - **Playlists**: editar `playlists.txt`, lanzar el prefetch ya, ver y reintentar las fallidas.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { doubtful, fmtTime, parseTime, type Line, type Lyrics } from "./engine";
+  import { doubtful, fmtTime, parseTime, type Line, type Lyrics, type Word } from "./engine";
 
   let {
     doc,
@@ -33,6 +33,7 @@
   let dirty = $state(false);
   let tap = $state(-1); // línea que marcará el próximo Espacio; -1 = modo tap apagado
   let paste = $state<string | null>(null);
+  let open = $state(-1); // línea con sus palabras desplegadas
   let rows: HTMLDivElement;
 
   const busy = $derived(!!job);
@@ -43,10 +44,30 @@
     delete l.words; // los tiempos por palabra ya no valen
     touch();
   }
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  /** Mover la línea mueve sus palabras con ella; quitarle el tiempo las quita. */
   function setT(l: Line, t: number | null) {
+    const d = t != null && l.t != null ? t - l.t : null;
     l.t = t;
-    delete l.end;
-    delete l.words;
+    if (d == null) {
+      delete l.end;
+      delete l.words;
+    } else {
+      if (l.end != null) l.end = r3(Math.max(0, l.end + d));
+      for (const w of l.words ?? []) {
+        w.t = r3(Math.max(0, w.t + d));
+        if (w.end != null) w.end = r3(Math.max(w.t, w.end + d));
+      }
+    }
+    touch();
+  }
+  /** Tiempo de una palabra (su fin se mueve igual). La primera manda en el inicio de la línea. */
+  function setWordT(l: Line, w: Word, t: number | null) {
+    if (t == null) return;
+    t = r3(Math.max(0, t));
+    if (w.end != null) w.end = r3(Math.max(t, w.end + t - w.t));
+    w.t = t;
+    if (l.words![0] === w) l.t = t;
     touch();
   }
   function insert(k: number) {
@@ -170,9 +191,24 @@
         <button class="ghost" title="Poner el tiempo actual" onclick={() => setT(l, Math.round(now * 100) / 100)}>⏱</button>
         <button class="ghost" title="Ir aquí" disabled={l.t == null} onclick={() => onseek(l.t!)}>▶</button>
         <input class="text" value={l.text} oninput={(e) => setText(l, e.currentTarget.value)} />
+        <button class="ghost" class:on={open === k} disabled={!l.words?.length} title="Tiempo de cada palabra" onclick={() => (open = open === k ? -1 : k)}>⋯</button>
         <button class="ghost" title="Línea debajo" onclick={() => insert(k)}>＋</button>
         <button class="ghost" title="Borrar" onclick={() => remove(k)}>✕</button>
       </div>
+      {#if open === k && l.words?.length}
+        <div class="words">
+          {#each l.words as w, j (j)}
+            <div class="word" class:now={w.t <= now && (w.end ?? l.words[j + 1]?.t ?? Infinity) > now} class:doubt={w.p != null && w.p < 0.5}>
+              <b>{w.w}</b>
+              <button class="ghost" title="−0.05 s" onclick={() => setWordT(l, w, w.t - 0.05)}>−</button>
+              <input class="wt" value={fmtTime(w.t)} onchange={(e) => setWordT(l, w, parseTime(e.currentTarget.value))} />
+              <button class="ghost" title="+0.05 s" onclick={() => setWordT(l, w, w.t + 0.05)}>+</button>
+              <button class="ghost" title="Poner el tiempo actual" disabled={!now} onclick={() => setWordT(l, w, now)}>⏱</button>
+              <button class="ghost" title="Ir aquí" onclick={() => onseek(w.t)}>▶</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {:else}
       <p class="hint">Sin letra. Pega el texto o añade líneas.</p>
       <button onclick={() => insert(-1)}>＋ Añadir línea</button>
@@ -253,6 +289,37 @@
   .row.tapnext {
     background: rgba(255, 61, 127, 0.25);
     outline: 1px solid #ff3d7f;
+  }
+  .words {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 4px 8px 78px;
+  }
+  .word {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 4px 2px 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 12px;
+  }
+  .word b {
+    margin-right: 2px;
+  }
+  .word button {
+    padding: 2px 5px;
+  }
+  .word.now {
+    outline: 1px solid #ff3d7f;
+  }
+  .word.doubt b {
+    color: #ffc23d;
+  }
+  .wt {
+    width: 62px;
+    font-variant-numeric: tabular-nums;
   }
   .time {
     width: 70px;

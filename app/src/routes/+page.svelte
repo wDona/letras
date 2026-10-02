@@ -128,7 +128,7 @@
   /** Guardar desde el editor: la letra es la suya, lo demás (desfase, nota…) lo que haya en disco. */
   async function saveDoc(d: Doc) {
     const disk = await loadDoc(d.key);
-    const out = { ...d, offset: disk?.offset, note: disk?.note, hidden: disk?.hidden };
+    const out = { ...d, offset: disk?.offset, word_offset: disk?.word_offset, note: disk?.note, hidden: disk?.hidden };
     await writeJson(lyricsPath(d.key), out);
     if (editing?.key === d.key) editing = out;
     await refresh();
@@ -255,17 +255,54 @@
     await refresh();
   }
 
-  async function bulk(action: "ai" | "audio" | "hide" | "show") {
-    const list = songs.filter((s) => picked.includes(s.key));
-    for (const s of list) {
-      if (action === "ai") enqueue(jobFor(s));
-      else if (action === "audio") await engine(["delete", s.key, "audio"]).catch((e) => (error = String(e)));
-      else {
-        const d = await loadDoc(s.key);
-        if (d) await writeJson(lyricsPath(s.key), { ...d, hidden: action === "hide" });
-      }
-    }
-    picked = [];
+  // ---------------------------------------------------------------- selección y acciones en bloque
+
+  let lastPick = ""; // ancla del shift-clic
+  /** Clic en la casilla (o ctrl/shift-clic en la fila): alterna una, o con shift todo el tramo desde la anterior. */
+  function pick(key: string, e: MouseEvent) {
+    const keys = shown.map((s) => s.key);
+    const a = keys.indexOf(lastPick), b = keys.indexOf(key);
+    const range = e.shiftKey && a >= 0 ? keys.slice(Math.min(a, b), Math.max(a, b) + 1) : [key];
+    picked = picked.includes(key) ? picked.filter((k) => !range.includes(k)) : [...new Set([...picked, ...range])];
+    lastPick = key;
+  }
+  const pickedSongs = $derived(songs.filter((s) => picked.includes(s.key)));
+  let bulkBusy = $state("");
+  let confirmBulkDel = $state(false);
+
+  const setField = async (s: Song, change: Partial<Doc>) => {
+    const d = await loadDoc(s.key);
+    if (d) await writeJson(lyricsPath(s.key), { ...d, ...change });
+  };
+  type Bulk = { label: string; title: string; when: (s: Song) => boolean; run: (s: Song) => unknown };
+  const BULK: Bulk[] = [
+    { label: "IA", title: "Sincroniza con IA (o transcribe las que no tienen letra)", when: (s) => !s.instrumental && !queued(s.key), run: (s) => enqueue(jobFor(s)) },
+    { label: "IA rápida", title: "Sin Whisper, sobre los tiempos por línea que ya tienen", when: (s) => s.timed && !queued(s.key), run: (s) => enqueue(jobFor(s, "lineas")) },
+    { label: "Buscar otra vez", title: "Vuelve a internet (la actual queda en el historial)", when: (s) => !queued(s.key), run: (s) => find(s, true) },
+    { label: "Volver a la anterior", title: "Recupera la versión anterior del historial", when: (s) => !!s.history && !queued(s.key), run: restore },
+    { label: "Ocultar", title: "Ocultar en el escritorio", when: (s) => !s.hidden, run: (s) => setField(s, { hidden: true }) },
+    { label: "Mostrar", title: "Mostrar en el escritorio", when: (s) => !!s.hidden, run: (s) => setField(s, { hidden: false }) },
+    { label: "Instrumental", title: "No buscar ni sincronizar", when: (s) => !s.instrumental, run: (s) => setField(s, { instrumental: true }) },
+    { label: "No instrumental", title: "Quitar la marca de instrumental", when: (s) => !!s.instrumental, run: (s) => setField(s, { instrumental: false }) },
+    { label: "Quitar desfase", title: "Desfase a 0", when: (s) => !!s.offset, run: (s) => setField(s, { offset: 0 }) },
+    { label: "Borrar audio", title: "La letra se queda; la IA tendría que volver a descargar", when: (s) => !!s.bytes && !queued(s.key), run: (s) => engine(["delete", s.key, "audio"]) },
+  ];
+
+  async function bulk(a: Bulk) {
+    bulkBusy = a.label;
+    for (const s of pickedSongs.filter(a.when)) await Promise.resolve(a.run(s)).catch((e) => (error = `${a.label} «${s.title}»: ${e}`));
+    bulkBusy = "";
+    await refresh();
+  }
+  async function bulkRetry() {
+    await retry(pickedSongs.filter((s) => s.failed).map((s) => s.key));
+  }
+  async function bulkDelete() {
+    confirmBulkDel = false;
+    bulkBusy = "Borrar";
+    for (const s of pickedSongs.filter((x) => !queued(x.key))) await engine(["delete", s.key, ""]).catch((e) => (error = String(e)));
+    if (picked.includes(selected)) selected = "";
+    bulkBusy = "";
     await refresh();
   }
 
@@ -314,8 +351,13 @@
     if (e.key === "/") {
       e.preventDefault();
       searchBox.focus();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      picked = shown.map((s) => s.key);
     } else if (e.key === "Escape") {
       if (panel) panel = "";
+      else if (confirmBulkDel) confirmBulkDel = false;
+      else if (picked.length) picked = [];
       else selected = "";
     } else if (e.key.toLowerCase() === "e" && selected) void edit(selected);
   }
@@ -439,10 +481,18 @@
   {#if picked.length}
     <div class="bar bulk">
       <b>{picked.length} seleccionadas</b>
-      <button onclick={() => bulk("ai")}>Sincronizar con IA</button>
-      <button onclick={() => bulk("audio")}>Borrar audio</button>
-      <button onclick={() => bulk("hide")}>Ocultar del escritorio</button>
-      <button onclick={() => bulk("show")}>Mostrar</button>
+      {#each BULK as a (a.label)}
+        {@const n = pickedSongs.filter(a.when).length}
+        {#if n}<button disabled={!!bulkBusy} title={a.title} onclick={() => bulk(a)}>{bulkBusy === a.label ? "…" : a.label}{n < picked.length ? ` (${n})` : ""}</button>{/if}
+      {/each}
+      {#if pickedSongs.some((s) => s.failed)}<button disabled={!!bulkBusy} onclick={bulkRetry}>Reintentar en prefetch</button>{/if}
+      {#if confirmBulkDel}
+        <button class="danger" onclick={bulkDelete}>¿Seguro? Borrar {picked.length} canciones</button>
+        <button class="ghost" onclick={() => (confirmBulkDel = false)}>No</button>
+      {:else}
+        <button class="ghost dangertxt" disabled={!!bulkBusy} onclick={() => (confirmBulkDel = true)}>Borrar canciones</button>
+      {/if}
+      <span class="muted small">Shift-clic: tramo · Ctrl+A: todas las visibles · Esc: quitar</span>
       <button class="ghost" onclick={() => (picked = [])}>✕</button>
     </div>
   {/if}
@@ -450,16 +500,18 @@
   <div class="table">
     <div class="thead">
       <input type="checkbox" checked={!!shown.length && shown.every((s) => picked.includes(s.key))}
-        onchange={(e) => (picked = e.currentTarget.checked ? shown.map((s) => s.key) : [])} />
+        onchange={(e) => { const keys = shown.map((s) => s.key); picked = e.currentTarget.checked ? [...new Set([...picked, ...keys])] : picked.filter((k) => !keys.includes(k)); }} />
       <span>Canción</span><span>Letra de</span><span>Sincronía</span><span>Audio</span><span>Fecha</span>
     </div>
     {#each shown as s (s.key)}
       {@const k = syncOf(s)}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <div class="tr" class:sel={selected === s.key} class:playing={s.key === trackKey} class:hiddenrow={s.hidden} onclick={() => (selected = s.key)}>
+      <div class="tr" class:sel={selected === s.key} class:playing={s.key === trackKey} class:hiddenrow={s.hidden} class:picked={picked.includes(s.key)}
+        onmousedown={(e) => e.shiftKey && e.preventDefault()}
+        onclick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? pick(s.key, e) : (selected = s.key))}>
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <span onclick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={picked.includes(s.key)} onchange={(e) => (picked = e.currentTarget.checked ? [...picked, s.key] : picked.filter((x) => x !== s.key))} />
+          <input type="checkbox" checked={picked.includes(s.key)} onclick={(e) => pick(s.key, e)} />
         </span>
         <span class="song">
           <b>{s.title}{#if s.key === trackKey}<em class="np-mark" title="Suena en Spotify">♪</em>{/if}</b>
@@ -533,7 +585,13 @@
       <button class="small" onclick={() => patch(s.key, { offset: Math.round(((s.offset ?? 0) + 0.1) * 100) / 100 })}>+0.1</button>
       {#if s.offset}<button class="small ghost" onclick={() => patch(s.key, { offset: 0 })}>0</button>{/if}
     </label>
-    <p class="muted small">Positivo = la letra sale más tarde. Se aplica en el escritorio (SUPER, SUPER+N, otros monitores).</p>
+    <label class="row">Palabras
+      <button class="small" onclick={() => patch(s.key, { word_offset: Math.round(((s.word_offset ?? 0) - 0.05) * 100) / 100 })}>−0.05</button>
+      <b class="mono">{(s.word_offset ?? 0) > 0 ? "+" : ""}{(s.word_offset ?? 0).toFixed(2)} s</b>
+      <button class="small" onclick={() => patch(s.key, { word_offset: Math.round(((s.word_offset ?? 0) + 0.05) * 100) / 100 })}>+0.05</button>
+      {#if s.word_offset}<button class="small ghost" onclick={() => patch(s.key, { word_offset: 0 })}>0</button>{/if}
+    </label>
+    <p class="muted small">Positivo = sale más tarde. «Desfase» mueve frases y palabras; «Palabras» solo el coloreado palabra a palabra. Se aplica en el escritorio (SUPER, SUPER+N, otros monitores).</p>
     <label class="check"><input type="checkbox" checked={!!s.hidden} onchange={(e) => patch(s.key, { hidden: e.currentTarget.checked })} /> Ocultar en el escritorio</label>
     <label class="check"><input type="checkbox" checked={!!s.instrumental} onchange={(e) => patch(s.key, { instrumental: e.currentTarget.checked })} /> Instrumental (no buscar ni sincronizar)</label>
     {#key s.key}
@@ -660,7 +718,7 @@
   .chip.on span { opacity: 0.8; }
   .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .search { flex: 1; min-width: 180px; }
-  .bulk { padding: 6px 10px; border-radius: 10px; background: rgba(122, 61, 255, 0.15); }
+  .bulk { flex-wrap: wrap; padding: 6px 10px; border-radius: 10px; background: rgba(122, 61, 255, 0.15); }
 
   .table { flex: 1; overflow-y: auto; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.07); }
   .thead, .tr {
@@ -673,6 +731,7 @@
   .thead { position: sticky; top: 0; background: #16131f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; z-index: 1; }
   .tr { border-top: 1px solid rgba(255, 255, 255, 0.04); cursor: pointer; }
   .tr:hover { background: rgba(255, 255, 255, 0.04); }
+  .tr.picked { background: rgba(122, 61, 255, 0.1); }
   .tr.sel { background: rgba(255, 61, 127, 0.12); }
   .tr.playing { box-shadow: inset 3px 0 #1ed760; }
   .tr.hiddenrow .song { opacity: 0.5; }

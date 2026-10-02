@@ -12,7 +12,7 @@
 
 Documento de letra (lyrics/<clave>.json):
   {"key", "artist", "title", "duration"?: s, "source", "times_from"?: fuente de los tiempos por línea si no es `source`, "synced": bool, "synced_by"?: "ia", "ai_mode"?: "whisper"|"lineas",
-   "instrumental": bool, "edited"?: bool, "offset"?: s, "hidden"?: bool (no sale en el escritorio), "note"?: str,
+   "instrumental": bool, "edited"?: bool, "offset"?: s, "word_offset"?: s (solo las palabras), "hidden"?: bool (no sale en el escritorio), "note"?: str,
    "lines": [{"t": s|None, "end"?: s, "text": str, "words"?: [{"t": s, "end"?: s, "w": str}]}]}
 """
 
@@ -373,7 +373,7 @@ def find(artist, title, album="", duration="0", force=""):
             old = json.loads(doc_path(key).read_text()) if doc_path(key).exists() else {}
             keep(key)  # «Buscar otra vez» pisa la letra (y lo hecho con IA): que se pueda volver
             # lo que pones tú a la canción (desfase, nota, oculta) no depende de la letra: se queda
-            doc = {**{k: old[k] for k in ("offset", "note", "hidden") if k in old},
+            doc = {**{k: old[k] for k in ("offset", "word_offset", "note", "hidden") if k in old},
                    "key": key, "artist": artist, "title": title, "duration": float(duration or 0) or old.get("duration", 0),
                    "source": source, **extra, "synced": src in SYNCED, "instrumental": False, "lines": lines}
             emit("done", key=key, lyrics=save(doc), cached=False)
@@ -1055,7 +1055,7 @@ def library():
         key, lines = f.stem, d.get("lines", [])
         files = list(AUDIO.glob(f"{key}.*"))  # la clave no lleva puntos: no casa con otra que empiece igual
         songs.append({
-            **{k: d.get(k) for k in ("artist", "title", "source", "times_from", "synced_by", "ai_mode", "edited", "instrumental", "offset", "hidden", "note", "duration")},
+            **{k: d.get(k) for k in ("artist", "title", "source", "times_from", "synced_by", "ai_mode", "edited", "instrumental", "offset", "word_offset", "hidden", "note", "duration")},
             "key": key,
             "lines": sum(bool(l.get("text")) for l in lines),
             "timed": any(l.get("t") is not None for l in lines),

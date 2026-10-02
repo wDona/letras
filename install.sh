@@ -15,6 +15,7 @@ BIN="$HOME/.local/bin/letras"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 DESKTOP="$APPS/letras.desktop"
+UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 say() { printf '\033[1;35m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -22,6 +23,9 @@ die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 GPU=""
 case "${1:-}" in
   --uninstall)
+    systemctl --user disable --now letras-prefetch.timer 2>/dev/null || true
+    rm -f "$UNITS/letras-prefetch.service" "$UNITS/letras-prefetch.timer"
+    systemctl --user daemon-reload 2>/dev/null || true
     rm -f "$BIN" "$DESKTOP" "$ICONS/128x128/apps/letras.png"
     command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
     say "Letras desinstalado. Tus letras siguen en su carpeta de datos."
@@ -112,8 +116,40 @@ StartupWMClass=letras
 EOF
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null || true
 
+# --- 6. segundo plano: sincroniza con IA las playlists de playlists.txt cada 6 h ------------------
+if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+  mkdir -p "$UNITS"
+  cat > "$UNITS/letras-prefetch.service" <<EOF
+[Unit]
+Description=Letras: sincroniza con IA las canciones de tus playlists (playlists.txt de la carpeta de datos)
+
+[Service]
+Type=oneshot
+ExecStart=$REPO/engine/.venv/bin/python $REPO/engine/engine.py prefetch
+# Horas de GPU con una playlist nueva. Comparte el candado de GPU con la app; con un juego abierto espera.
+TimeoutStartSec=infinity
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+EOF
+  cat > "$UNITS/letras-prefetch.timer" <<EOF
+[Unit]
+Description=Letras: mira cada 6 h si hay canciones nuevas en tus playlists
+
+[Timer]
+OnStartupSec=15min
+OnUnitInactiveSec=6h
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now letras-prefetch.timer >/dev/null 2>&1
+fi
+
 data="${LETRAS_DATA:-$([[ -w /data ]] && echo /data/letras || echo "${XDG_DATA_HOME:-$HOME/.local/share}/letras")}"
 say "Listo. Búscala como «Letras» en tu lanzador, o ejecuta: letras"
 echo "    Datos (letras, audio): $data   (cámbialo con la variable LETRAS_DATA)"
+echo "    Segundo plano: pon URLs de playlists públicas de Spotify en $data/playlists.txt (una por línea)"
 echo "    Motor: $REPO/engine   (no muevas la carpeta del repo; para reinstalar, vuelve a ejecutar ./install.sh)"
 [[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || echo "    Nota: ~/.local/bin no está en tu PATH; desde el lanzador funciona igual."

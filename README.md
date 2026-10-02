@@ -26,7 +26,8 @@ Letra de lo que suene, sincronizada y con efectos. App Tauri + Svelte; el motor 
   mientras la GPU trabaja. Si la letra ya trae tiempos por línea usa el modo rápido (sin Whisper; si el audio
   es otra versión, repite con Whisper). Con un juego abierto (Steam/Proton, gamescope, Wine; `LETRAS_GAMES` para otro patrón)
   espera, y si el juego empieza a mitad de canción la corta para soltar la VRAM y la repite luego. Lo que falla va a
-  `.prefetch-failed`. Un timer de systemd (`letras-prefetch.timer`, cada 6 h) lo lanza.
+  `.prefetch-failed`. Lo lanza cada 6 h un timer de systemd de usuario (`letras-prefetch.timer`) que pone `install.sh`
+  (y quita `--uninstall`).
 - **Editor** (E): al transcribir con IA se abre solo y marca en amarillo las líneas con palabras dudosas. Texto y tiempo por línea, pegar el texto entero, desplazar todo, tap-sync (Espacio en cada
   línea mientras suena) y re-sincronizar con IA.
 - **Estilo** (S): presets (Apple Music, Karaoke, Neón, Vapor, Minimal) y todo ajustable: fuente, tamaños,

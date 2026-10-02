@@ -828,6 +828,32 @@ def get_audio(artist, title, audio="", duration="0"):
         got.unlink()
 
 
+def online_times(doc):
+    """Los tiempos por línea vienen de una fuente sincronizada (LRCLIB…), aunque el texto sea de Genius:
+    se confía en ellos, la IA solo pone las palabras dentro de cada frase."""
+    names = {s.__name__ for s in SYNCED}
+    return (doc.get("times_from") or doc.get("source")) in names
+
+
+def keep_lines(lines, ref):
+    """Devuelve a cada frase el inicio y el fin de `ref` (los de internet) y mete sus palabras dentro:
+    la primera empieza con la frase, ninguna va hacia atrás ni pasa del fin. Fin = el de `ref`, o el
+    inicio de la siguiente frase."""
+    starts = [l.get("t") for l in ref]
+    for i, (line, r) in enumerate(zip(lines, ref)):
+        a = r.get("t")
+        if a is None:
+            continue
+        b = r.get("end") or next((x for x in starts[i + 1 :] if x is not None and x > a), None) or line.get("end") or a + 5
+        line["t"], line["end"] = a, b
+        prev = a
+        for k, w in enumerate(line.get("words") or []):
+            t = a if k == 0 else min(max(w["t"], prev), b)
+            w["t"], w["end"] = round(t, 3), round(min(max(w.get("end", t), t), b), 3)
+            prev = t
+    return lines
+
+
 def spread(lines):
     """Líneas con tiempo (LRC de internet) -> palabras repartidas por letras hasta la línea siguiente:
     el punto de partida del alineado cuando no se pasa Whisper."""
@@ -856,7 +882,10 @@ def ai(artist, title, audio="", duration="0", mode=""):
     AUDIO.mkdir(parents=True, exist_ok=True)
     wav, vocals, heard_f = AUDIO / f"{key}.wav", AUDIO / f"{key}.vocals.wav", AUDIO / f"{key}.{WHISPER_MODEL}.words.json"
     doc = json.loads(doc_path(key).read_text()) if doc_path(key).exists() else {}
-    fast = mode == "lineas"
+    # Frases de internet: mandan sus tiempos, la IA solo reparte las palabras dentro (sin Whisper, que solo
+    # serviría para recalcular las frases). Salvo que el audio sea otra versión: entonces Whisper mide el desfase.
+    online = online_times(doc) and any(l["t"] is not None and l["text"] for l in doc.get("lines", []))
+    fast = mode == "lineas" or online
     if fast and not any(l["t"] is not None and l["text"] for l in doc.get("lines", [])):
         raise RuntimeError("la letra no tiene tiempos por línea: usa «Sincronizar con IA»")
     steps = ["Consiguiendo el audio", "Separando la voz", "Transcribiendo con Whisper", "Alineando", "Ajustando cada palabra"]
@@ -877,9 +906,17 @@ def ai(artist, title, audio="", duration="0", mode=""):
         em, rms = ctc_frames(vocals, AUDIO / f"{key}.ctc.npz")
         # sin Whisper no hay forma fiable de medir el desfase de otra versión (la voz sola encajaba mal en 4 de 17):
         # si el audio no dura lo que tu canción, es otra versión y los tiempos por línea no le valen
-        if float(duration or 0) and not close(len(rms) / FPS, float(duration)):
+        other = float(duration or 0) and not close(len(rms) / FPS, float(duration))
+        if other and mode == "lineas":
             raise RuntimeError(f"el audio dura {len(rms) / FPS:.0f} s y tu canción {float(duration):.0f} s: es otra versión. Usa «Sincronizar con IA»")
-        lines = refine(spread(doc["lines"]), em, rms, pad=0.5, far=float("inf"))
+        if other:
+            fast = False
+            steps = ["Consiguiendo el audio", "Separando la voz", "Transcribiendo con Whisper", "Alineando", "Ajustando cada palabra"]
+    if fast:
+        # con frases de internet la ventana de cada una es exacta (pad 0): sus palabras se buscan solo ahí
+        lines = refine(spread(doc["lines"]), em, rms, pad=0 if online else 0.5, far=float("inf"))
+        if online:
+            lines = keep_lines(lines, doc["lines"])
         keep(key)
         doc.update(synced=True, synced_by="ia", ai_mode="lineas", lines=lines)
         emit("done", key=key, lyrics=save(doc), history=len(history(key)))
@@ -906,6 +943,8 @@ def ai(artist, title, audio="", duration="0", mode=""):
         by = version_shift(doc.get("lines", []), lines)
         if abs(by) > 1:  # otra versión del audio: a los tiempos de la tuya
             lines = shifted(lines, -by)
+        if online:
+            lines = keep_lines(lines, doc["lines"])
     keep(key)
     doc.update(key=key, artist=artist, title=title, synced=True, synced_by="ia", ai_mode="whisper", instrumental=not lines, lines=lines)
     if float(duration or 0):

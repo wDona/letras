@@ -178,4 +178,13 @@ engine.genius = lambda *a: "otra cancion que no tiene nada que ver"
 assert engine.genius_text(lrc_lines, "t", "a", "", 0) is None
 engine.genius = lambda *a: "\n".join(l["text"] for l in lrc_lines)  # misma letra: nada que cambiar
 assert engine.genius_text(lrc_lines, "t", "a", "", 0) is None
+# frases de internet: la IA no toca su inicio ni su fin, solo mete las palabras dentro
+ref = [{"t": 10.0, "text": "a b c"}, {"t": 14.0, "text": "d"}]
+got = [{"t": 9.5, "end": 15.0, "text": "a b c", "words": [{"t": 9.5, "end": 10.2, "w": "a"}, {"t": 11.0, "end": 11.5, "w": "b"}, {"t": 14.5, "end": 15.0, "w": "c"}]},
+       {"t": 14.6, "end": 16.0, "text": "d", "words": [{"t": 14.6, "end": 16.0, "w": "d"}]}]
+k = engine.keep_lines(got, ref)
+assert (k[0]["t"], k[0]["end"], k[1]["t"]) == (10.0, 14.0, 14.0), k
+assert [(w["t"], w["end"]) for w in k[0]["words"]] == [(10.0, 10.2), (11.0, 11.5), (14.0, 14.0)], k[0]["words"]
+assert k[1]["words"][0]["t"] == 14.0 and k[1]["end"] == 16.0  # la última, sin siguiente: el fin que oyó la IA
+assert engine.online_times({"source": "genius", "times_from": "lrclib"}) and not engine.online_times({"source": "genius"})
 print("ok")

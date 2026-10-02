@@ -250,8 +250,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![engine, cancel, cancel_all, read_file, write_file, data_dir_cmd, log, player, player_seek, prefetch_now])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        // al cerrar, los trabajos del motor mueren con la app: si no quedaban huérfanos con la GPU cogida
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                cancel_all();
+            }
+        });
 }
 
 #[cfg(test)]

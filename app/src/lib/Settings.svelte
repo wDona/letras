@@ -38,7 +38,6 @@
         <option value="word">Karaoke por palabra</option><option value="line">Línea entera</option><option value="none">Sin barrido</option>
       </select>
     </label>
-    <label>Desenfoque <input type="range" min="0" max="5" step="0.1" bind:value={s.blur} /><span>{s.blur}px</span></label>
     <label>Zoom activa <input type="range" min="0.9" max="1.3" step="0.01" bind:value={s.scale} /><span>×{s.scale}</span></label>
     <label>Salto palabra <input type="range" min="0" max="12" bind:value={s.lift} /><span>{s.lift}px</span></label>
     <label class="check"><input type="checkbox" bind:checked={s.flicker} /> Parpadeo neón</label>
@@ -71,8 +70,7 @@
     overflow-y: auto;
     padding: 16px;
     box-sizing: border-box;
-    background: rgba(14, 12, 22, 0.82);
-    backdrop-filter: blur(24px) saturate(1.4);
+    background: rgb(14, 12, 22);
     border-left: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 10;
     animation: slide 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);

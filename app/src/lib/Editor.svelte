@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fmtTime, parseTime, type Line, type Lyrics } from "./engine";
+  import { doubtful, fmtTime, parseTime, type Line, type Lyrics } from "./engine";
 
   let {
     doc,
@@ -27,6 +27,7 @@
   let paste = $state<string | null>(null);
   let rows: HTMLDivElement;
 
+  const doubts = $derived(lines.filter((l) => doubtful(l).length).length);
   const touch = () => (dirty = true);
   function setText(l: Line, text: string) {
     l.text = text;
@@ -119,6 +120,12 @@
     </span>
   </div>
 
+  {#if doc.source === "ia" && !doc.edited}
+    <p class="hint warn">
+      Transcrita por IA: revísala.{doubts ? ` ${doubts} líneas con palabras dudosas marcadas en amarillo (▶ para oírlas).` : ""}
+    </p>
+  {/if}
+
   {#if tap >= 0}
     <p class="hint">Reproduce la canción y pulsa <kbd>Espacio</kbd> justo cuando empiece cada línea resaltada. <kbd>⌫</kbd> vuelve una atrás.</p>
   {/if}
@@ -135,7 +142,7 @@
 
   <div class="rows" bind:this={rows}>
     {#each lines as l, k (k)}
-      <div class="row" class:tapnext={k === tap} class:playing={l.t != null && l.t <= now && (lines[k + 1]?.t ?? Infinity) > now}>
+      <div class="row" class:doubt={doubtful(l).length} title={doubtful(l).length ? `La IA no tiene claro: ${doubtful(l).join(", ")}` : undefined} class:tapnext={k === tap} class:playing={l.t != null && l.t <= now && (lines[k + 1]?.t ?? Infinity) > now}>
         <input class="time" value={fmtTime(l.t)} placeholder="--:--" onchange={(e) => setT(l, parseTime(e.currentTarget.value))} />
         <button class="ghost" title="Poner el tiempo actual" onclick={() => setT(l, Math.round(now * 100) / 100)}>⏱</button>
         <button class="ghost" title="Ir aquí" disabled={l.t == null} onclick={() => onseek(l.t!)}>▶</button>
@@ -161,8 +168,7 @@
     flex-direction: column;
     gap: 10px;
     padding: 16px;
-    background: rgba(14, 12, 22, 0.82);
-    backdrop-filter: blur(24px) saturate(1.4);
+    background: rgb(14, 12, 22);
     border-left: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 10;
     animation: slide 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);
@@ -206,6 +212,16 @@
   }
   .row.playing {
     background: rgba(255, 255, 255, 0.07);
+  }
+  .row.doubt {
+    box-shadow: inset 3px 0 #ffc23d;
+  }
+  .row.doubt .text {
+    border-color: rgba(255, 194, 61, 0.5);
+  }
+  .hint.warn {
+    color: #ffc23d;
+    opacity: 1;
   }
   .row.tapnext {
     background: rgba(255, 61, 127, 0.25);

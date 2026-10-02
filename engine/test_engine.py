@@ -30,5 +30,77 @@ assert all(a["t"] <= b["t"] for a, b in zip(out, out[1:]))
 assert [l["t"] for l in engine.align(["a b", "c"], [])] == [0.0, 0.6]  # sin nada oído: no peta
 print("ok")
 
+# voz en 2-4 s y 10-11 s sobre un fondo 40 dB más bajo (lo que deja la separación): solo esos tramos
+import numpy as np
+
+sr = 16000
+a = np.full(12 * sr, 0.003, dtype=np.float32)
+a[2 * sr : 4 * sr] = a[10 * sr : 11 * sr] = 0.3
+clips = engine.voiced(a)
+assert len(clips) == 4 and 1.5 <= clips[0] <= 2 and 4 <= clips[1] <= 4.5 and 9.5 <= clips[2] <= 10 and 11 <= clips[3] <= 11.5, clips
+assert engine.voiced(np.zeros(sr, dtype=np.float32)) == []
+assert engine.JUNK.search("Subtítulos realizados por la comunidad de Amara.org") and engine.JUNK.search("[Música]")
+assert not engine.JUNK.search("bailando con la música")
+
+# respiro de 1 s parte la frase; pausa de 6 s deja una línea vacía
+w = lambda t, s: {"t": t, "end": t + 0.3, "w": s, "p": 0.9}
+out = engine.to_lines([{"words": [w(0, "hola"), w(0.4, "mar"), w(1.7, "otra"), w(8, "vuelta")]}])
+assert [l["text"] for l in out] == ["hola mar", "otra", "", "vuelta"], out
+assert out[2]["t"] == out[1]["end"] and out[3]["words"][0]["p"] == 0.9
+print("ok")
+
+# página de Genius: dos contenedores (los parte un anuncio, no una estrofa: van seguidos), cabecera excluida, [Estribillo] fuera, <br> = salto
+page = engine.GeniusPage()
+page.feed("""<div>menú</div><div data-lyrics-container="true"><div data-exclude-from-selection="true"><span>3 Contributors</span></div>
+[Estribillo]<br/>linea <a href="#"><span>uno</span></a><br/>linea dos</div><div>anuncio</div>
+<div data-lyrics-container="true">linea tres<br><img src="x">linea cuatro</div>""")
+assert page.text() == "linea uno\nlinea dos\nlinea tres\nlinea cuatro", repr(page.text())
+assert engine.same_artist("Joan Jett", "Joan Jett & The Blackhearts") and not engine.same_artist("Avicii", "Joan Jett")
+print("ok")
+
 assert engine.same_title("Canción - Remastered 2011", "cancion") and not engine.same_title("Otra", "cancion") and not engine.same_title("Yo soy", "y") and engine.same_title("Canción (Live)", "Cancion")
+print("ok")
+
+# YouTube: otra canción que dura lo mismo nunca vale; con título, gana la duración, luego el canal, luego no ser un clip
+vids = [{"title": "Otra cosa", "duration": 147, "channel": "Nadie"}, {"title": "Cancion (baile)", "duration": 27, "channel": "Nadie"},
+        {"title": "Cancion (Live)", "duration": 260, "channel": "Fulano"}, {"title": "Cancion", "duration": 178, "channel": "Nadie"}]
+assert engine.pick_video(vids, "Nadie", "Cancion", 178) is vids[3]
+assert engine.pick_video(vids, "Nadie", "Cancion", 147) is vids[3]  # el de 147 s no lleva el título
+assert engine.pick_video(vids, "Nadie", "Cancion", 0) is vids[3]  # sin duración: canal y no clip
+assert engine.pick_video(vids[:1], "Nadie", "Cancion", 147) is None
+
+# letra vs lo oído: misma canción alta, otra canción ~0
+oido = [{"w": w} for w in "uno dos tres cuatro cinco".split()]
+assert engine.match_ratio(["uno dos", "tres cuatro cinco"], oido) == 1
+assert engine.match_ratio(["sol luna mar", "cielo"], oido) == 0
+print("ok")
+
+# estribillo repetido: el segundo escrito va al segundo cantado aunque la estrofa de en medio se oiga mal
+heard = [{"t": float(t), "end": t + 0.5, "w": w} for t, w in enumerate("x y z w a b c d x y z w qq rr ss tt x y z w".split())]
+out = engine.align(["x y z w", "a b c d", "x y z w", "e f g h", "x y z w"], heard)
+assert [l["t"] for l in out] == [0, 4, 8, 12, 16], [l["t"] for l in out]
+assert engine.pair(["a", "b"], []) == [None, None] and engine.pair([], ["a"]) == []
+print("ok")
+
+# final con ad-lib que no está en la letra y la frase repetida: la línea se queda con la primera vez que suena
+heard = [{"t": float(t), "end": t + 0.5, "w": w} for t, w in enumerate("a b c d e f g h oh oh oh oh oh e f g h".split())]
+out = engine.align(["a b c d", "e f g h"], heard)
+assert [w["t"] for w in out[1]["words"]] == [4, 5, 6, 7], out[1]
+print("ok")
+
+# japonés: claves propias (antes todo lo no ASCII se quedaba vacío y chocaba en "cancion"), carácter a carácter
+assert engine.song_key("テスト", "猫の歌") == "テスト-猫の歌" and engine.song_key("Artísta", "Canción") == "artista-cancion"
+assert engine.norm("Ｔｅｓｔ、") == "test" and engine.norm("が") != engine.norm("か")
+assert engine.tokens("猫が歩く hello world、") == ["猫", "が", "歩", "く", "hello", "world", "、"]
+assert engine.join_words(["猫", "が", "hello", "歩", "く"]) == "猫が hello 歩く"
+assert not engine.same_title("猫の歌", "犬の歌") and engine.same_title("猫の歌", "猫の歌") and not engine.same_title("!!", "??")
+# Whisper oye «猫が» como una palabra y «歩く» como otra; la letra escrita sin espacios se sincroniza igual
+heard = [{"t": 1.0, "end": 2.0, "w": "猫が"}, {"t": 3.0, "end": 4.0, "w": "歩く"}, {"t": 5.0, "end": 5.5, "w": "。"}]
+out = engine.align(["猫が", "歩く。"], heard)
+assert [l["t"] for l in out] == [1.0, 3.0] and [w["t"] for w in out[1]["words"]] == [3.0, 3.5, 5.0], out
+assert engine.match_ratio(["猫が歩く"], heard) == 1
+assert engine.to_lines([{"words": [{"t": 0, "end": 0.3, "w": "猫が"}, {"t": 0.4, "end": 0.7, "w": "歩く"}]}])[0]["text"] == "猫が歩く"
+# signos sueltos no casan entre sí
+assert engine.pair(engine.keys(["-"], "w"), engine.keys(["、"], "h")) == [0]  # se empareja por posición (sustitución), pero no cuenta como igual
+assert engine.match_ratio(["-"], [{"t": 0, "w": "、"}]) == 0
 print("ok")

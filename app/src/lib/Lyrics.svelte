@@ -28,6 +28,10 @@
   });
 
   /** Palabras con inicio y fin. Sin tiempos por palabra, se reparten por letras dentro de la línea. */
+  // japonés/chino: sin espacio entre dos caracteres (el motor los separa uno a uno para sincronizarlos)
+  const CJK = /[\u3000-\u303f\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/;
+  const spaceAfter = (w: string, next?: string) => (next && CJK.test(w.at(-1)!) && CJK.test(next[0]) ? "" : " ");
+
   function wordsOf(line: Line, k: number): Word[] {
     const end = line.t == null ? 0 : endOf(k);
     if (line.words?.length) {
@@ -85,8 +89,8 @@
         style:margin-bottom="{s.lineGap}em"
         style:transform={synced ? `translateY(${-y}px) scale(${on ? s.scale : 0.92 + 0.08 * (1 - far / 6)})` : null}
         style:transform-origin={s.align === "center" ? "center" : "left center"}
-        style:transition="transform {s.speed}ms cubic-bezier(.2,.85,.25,1.08) {Math.max(0, Math.min(d, 8)) * 45}ms, filter 400ms, opacity 400ms"
-        style:filter={synced && !on && s.blur ? `blur(${far * s.blur}px)` : on && s.glow ? `drop-shadow(0 0 ${s.glow}px var(--glow))` : null}
+        style:transition="transform {s.speed}ms cubic-bezier(.2,.85,.25,1.08) {Math.max(0, Math.min(d, 8)) * 45}ms, opacity 400ms"
+        style:text-shadow={on && s.glow ? `0 0 ${s.glow}px var(--glow)` : null}
         style:opacity={synced ? (on ? 1 : Math.abs(d) > 8 ? 0 : 1 - far * 0.12) : 1}
         onclick={() => line.t != null && onseek(line.t)}
       >
@@ -99,7 +103,7 @@
         {:else}
           {#each wordsOf(line, k) as w, i (i)}
             {@const p = past ? 1 : on ? prog(w) : 0}
-            <span class="w" class:sing={on && p > 0 && p < 1} style:--p={p}>{w.w}</span>{" "}
+            <span class="w" class:sing={on && p > 0 && p < 1} style:--p={p}>{w.w}</span>{spaceAfter(w.w, line.words?.[i + 1]?.w)}
           {/each}
         {/if}
       </div>
@@ -124,8 +128,6 @@
     padding: 0 8vw;
     line-height: 1.18;
     letter-spacing: -0.01em;
-    -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 82%, transparent);
-    mask-image: linear-gradient(transparent, #000 14%, #000 82%, transparent);
   }
   .box.plain {
     overflow-y: auto;
@@ -140,7 +142,6 @@
   .line {
     color: var(--unsung);
     cursor: pointer;
-    will-change: transform;
     text-wrap: balance;
   }
   .plain .line {

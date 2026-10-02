@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type Word = { t: number; end?: number; w: string };
+export type Word = { t: number; end?: number; w: string; p?: number }; // p: confianza de Whisper (0-1)
 export type Line = { t: number | null; end?: number; text: string; words?: Word[] };
 export type Lyrics = {
   key: string;
@@ -64,10 +64,14 @@ export const SOURCE_LABEL: Record<string, string> = {
   qq: "QQ Música",
   kugou: "Kugou",
   lrclib_plain: "LRCLIB (sin tiempos)",
+  genius: "Genius (sin tiempos)",
   lyrics_ovh: "lyrics.ovh (sin tiempos)",
   ia: "IA",
   manual: "a mano",
 };
+
+/** Palabras que Whisper no tiene claras: lo primero que revisar en una letra transcrita. */
+export const doubtful = (l: Line) => (l.words ?? []).filter((w) => w.p != null && w.p < 0.5).map((w) => w.w);
 
 /** 83.456 -> "1:23.45" */
 export const fmtTime = (s: number | null) =>

@@ -91,6 +91,16 @@
     } finally {
       if (id === findId) searching = false;
     }
+    ensureSynced();
+  }
+
+  /** La meta: toda canción acaba sincronizada. Letra plana de internet -> la IA le pone tiempos; sin letra -> la transcribe.
+   *  Un trabajo de IA a la vez (GPU); al acabar uno se mira si la canción que suena ahora necesita otro. */
+  const aiFailed = new Set<string>(); // no reintentar en bucle lo que ya petó (los botones siguen ahí)
+  function ensureSynced() {
+    if (job || searching || !track || !key || aiFailed.has(key)) return;
+    if (doc && (doc.instrumental || doc.lines.some((l) => l.t != null))) return;
+    void runAI();
   }
 
   async function save(d: Doc) {
@@ -99,19 +109,26 @@
   }
 
   async function runAI(d?: Doc) {
-    if (!track) return;
+    if (!track || job) return;
     if (d) await save(d);
     error = "";
     job = { label: "Preparando IA" };
+    const t = track, k = key; // la canción puede cambiar mientras trabaja: el resultado es de esta
     try {
-      const audioSrc = mode === "file" ? filePath : (track.url ?? "");
-      const r = await engine<{ lyrics: Doc }>(["ai", track.artist, track.title, audioSrc], progress);
-      doc = r.lyrics;
+      const audioSrc = mode === "file" ? filePath : (t.url ?? "");
+      const r = await engine<{ lyrics: Doc }>(["ai", t.artist, t.title, audioSrc, String(Math.round(t.duration))], progress);
+      aiFailed.delete(k);
+      if (k === key) {
+        doc = r.lyrics;
+        if (doc.source === "ia" && doc.lines.length) panel = "edit"; // transcrita: lo siguiente es corregirla
+      } // si no, ya está en disco y saldrá de la caché cuando vuelva a sonar
     } catch (e) {
-      error = `IA: ${e}`;
+      aiFailed.add(k);
+      if (k === key) error = `IA: ${e}`;
     } finally {
       job = null;
     }
+    ensureSynced();
   }
 
   async function openFile() {
@@ -237,6 +254,9 @@
         <p>Buscando letra de <b>{track.title}</b>…</p>
       {:else if doc?.instrumental}
         <h1>♪ Instrumental ♪</h1>
+      {:else if job}
+        <div class="spinner"></div>
+        <p>Sin letra en internet: sacándola con IA…</p>
       {:else}
         <h1>Sin letra en internet</h1>
         <p>Ni sincronizada ni plana en ninguna fuente.</p>
@@ -287,6 +307,13 @@
     Letra sin tiempos ({SOURCE_LABEL[doc!.source] ?? doc!.source}).
     <button class="primary" onclick={() => runAI()}>Sincronizar con IA</button>
     <button onclick={() => (panel = "edit")}>A mano</button>
+  </div>
+{/if}
+
+{#if doc?.source === "ia" && !doc.edited && doc.lines.length && !job && panel !== "edit"}
+  <div class="banner">
+    Letra sacada con IA, puede tener fallos.
+    <button class="primary" onclick={() => (panel = "edit")}>Revisar y editar</button>
   </div>
 {/if}
 
@@ -469,8 +496,7 @@
     padding: 10px 16px;
     border-radius: 14px;
     font-size: 14px;
-    background: rgba(14, 12, 22, 0.75);
-    backdrop-filter: blur(20px);
+    background: rgb(14, 12, 22);
     border: 1px solid rgba(255, 255, 255, 0.1);
     z-index: 6;
     max-width: calc(100vw - 32px);
